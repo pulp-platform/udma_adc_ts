@@ -1,12 +1,20 @@
-
+// Copyright 2016 ETH Zurich and University of Bologna.
+// Copyright and related rights are licensed under the Solderpad Hardware
+// License, Version 0.51 (the “License”); you may not use this file except in
+// compliance with the License.  You may obtain a copy of the License at
+// http://solderpad.org/licenses/SHL-0.51. Unless required by applicable law
+// or agreed to in writing, software, hardware and materials distributed under
+// this License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR
+// CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 module udma_adc_ts_top #(
   parameter L2_AWIDTH_NOAL  = 12,
   parameter UDMA_TRANS_SIZE = 16,
   parameter TRANS_SIZE      = 16,
   parameter TS_DATA_WIDTH   = 28,
-  parameter TS_ID_LSB       = 28,
-  parameter TS_NUM_CHS      = 8   )
+  parameter TS_CHID_LSB     = 28,
+  parameter TS_CHID_WIDTH   = 4  )
 (
   input  logic                       sys_clk_i,
   input  logic                       ts_clk_i,
@@ -35,29 +43,26 @@ module udma_adc_ts_top #(
   input  logic                       data_rx_ready_i,
 
   // Timestamp signals
-  input  logic      [TS_NUM_CHS-1:0] ts_valid_async_i,
+  input  logic                       ts_valid_async_i,
+  input  logic   [TS_CHID_WIDTH-1:0] ts_chid_i,
   input  logic   [TS_DATA_WIDTH-1:0] ts_data_i
 );
 
 
-  localparam TS_ID_WIDTH = $clog2(TS_NUM_CHS);
-
-  logic [2:0][TS_NUM_CHS-1:0] ts_data_valid_sync;
-  logic      [TS_NUM_CHS-1:0] ts_vld_edge;
+  logic                 [2:0] ts_data_valid_sync;
+  logic                       ts_vld_edge;
   logic   [TS_DATA_WIDTH-1:0] ts_data_sync;
 
-  logic [2:0][TS_NUM_CHS-1:0] sys_data_valid_sync;
-  logic      [TS_NUM_CHS-1:0] sys_vld_edge;
+  logic                 [2:0] sys_data_valid_sync;
+  logic                       sys_vld_edge;
   logic                       sys_udma_valid_SP, sys_udma_valid_SN;
   logic                [31:0] sys_data_sync;
   logic                [31:0] sys_merged_data;
-  logic     [TS_ID_WIDTH-1:0] sys_id_bin;
 
   assign data_rx_valid_o = sys_udma_valid_SP;
   assign data_rx_o       = sys_data_sync;
 
-
-  // sync & edge detect of individual sync channels - ts clock side
+  // sync & edge detect of ts_valid - ts clock side
   always_ff @(posedge ts_clk_i, negedge rst_ni) begin
     if ( rst_ni == 1'b0 ) begin
       ts_data_valid_sync    <= '0;
@@ -68,12 +73,12 @@ module udma_adc_ts_top #(
       ts_data_valid_sync[1] <= ts_data_valid_sync[0];
       ts_data_valid_sync[2] <= ts_data_valid_sync[1];
 
-      if (|ts_vld_edge) ts_data_sync <= ts_data_i;
+      if (ts_vld_edge) ts_data_sync <= ts_data_i;
 
     end
   end
 
-  // sync & edge detect of individual sync channels - sys clock side
+  // sync & edge detect of ts_valid - sys clock side
   always_ff @(posedge sys_clk_i, negedge rst_ni) begin
     if ( rst_ni == 1'b0 ) begin
       sys_data_valid_sync    <= '0;
@@ -86,32 +91,24 @@ module udma_adc_ts_top #(
       sys_data_valid_sync[2] <= sys_data_valid_sync[1];
       sys_udma_valid_SP      <= sys_udma_valid_SN;
 
-      if (|sys_vld_edge) sys_data_sync <= sys_merged_data;
+      if (sys_vld_edge) sys_data_sync <= sys_merged_data;
 
     end
   end
-
-  onehot_to_bin #(
-    .ONEHOT_WIDTH (TS_NUM_CHS)
-  ) onehot_to_bin_ch_id_i 
-  (
-    .onehot ( sys_vld_edge ),
-    .bin    ( sys_id_bin )
-  );
 
   assign ts_vld_edge  = (ts_data_valid_sync[1]  & ~ts_data_valid_sync[2])  | (~ts_data_valid_sync[1]  & ts_data_valid_sync[2]);
   assign sys_vld_edge = (sys_data_valid_sync[1] & ~sys_data_valid_sync[2]) | (~sys_data_valid_sync[1] & sys_data_valid_sync[2]);
 
   always_comb begin
     sys_merged_data = '0;
-    sys_merged_data[TS_DATA_WIDTH-1:0]                 = ts_data_sync; // handover between clock domains here
-    sys_merged_data[TS_ID_LSB+TS_ID_WIDTH-1:TS_ID_LSB] = sys_id_bin;
+    sys_merged_data[TS_DATA_WIDTH-1:0]                       = ts_data_sync; // handover between clock domains here
+    sys_merged_data[TS_CHID_LSB+TS_CHID_WIDTH-1:TS_CHID_LSB] = ts_chid_i;
   end
 
 
   always_comb begin
     sys_udma_valid_SN = sys_udma_valid_SP;
-    if (|sys_vld_edge)
+    if (sys_vld_edge)
       sys_udma_valid_SN = 1'b1;
     else if (data_rx_ready_i)
       sys_udma_valid_SN = 1'b0;
