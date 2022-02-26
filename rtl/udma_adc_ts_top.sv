@@ -14,11 +14,13 @@ module udma_adc_ts_top #(
   parameter TRANS_SIZE      = 16,
   parameter TS_DATA_WIDTH   = 28,
   parameter TS_CHID_LSB     = 28,
-  parameter TS_CHID_WIDTH   = 4  )
-(
+  parameter TS_CHID_WIDTH   = 4
+)(
   input  logic                       sys_clk_i,
   input  logic                       ts_clk_i,
   input  logic                       rst_ni,
+
+  input  logic                       test_mode_i,
 
   input  logic                [31:0] cfg_data_i,
   input  logic                 [4:0] cfg_addr_i,
@@ -73,7 +75,8 @@ module udma_adc_ts_top #(
       ts_data_valid_sync[1] <= ts_data_valid_sync[0];
       ts_data_valid_sync[2] <= ts_data_valid_sync[1];
 
-      if (ts_vld_edge) ts_data_sync <= ts_data_i;
+      if (ts_vld_edge)
+        ts_data_sync <= ts_data_i;
 
     end
   end
@@ -91,7 +94,8 @@ module udma_adc_ts_top #(
       sys_data_valid_sync[2] <= sys_data_valid_sync[1];
       sys_udma_valid_SP      <= sys_udma_valid_SN;
 
-      if (sys_vld_edge) sys_data_sync <= sys_merged_data;
+      if (sys_vld_edge)
+        sys_data_sync <= sys_merged_data;
 
     end
   end
@@ -105,7 +109,6 @@ module udma_adc_ts_top #(
     sys_merged_data[TS_CHID_LSB+TS_CHID_WIDTH-1:TS_CHID_LSB] = ts_chid_i;
   end
 
-
   always_comb begin
     sys_udma_valid_SN = sys_udma_valid_SP;
     if (sys_vld_edge)
@@ -115,33 +118,33 @@ module udma_adc_ts_top #(
   end
 
 
-  udma_adc_ts_reg_if #(
+  udma_generic_reg_if #(
     .L2_AWIDTH_NOAL  ( L2_AWIDTH_NOAL  ),
     .UDMA_TRANS_SIZE ( UDMA_TRANS_SIZE ),
     .TRANS_SIZE      ( TRANS_SIZE      )
-  ) udma_adc_ts_reg_if_i
-  (
-    .clk_i               ( sys_clk_i            ),
-    .rstn_i              ( rst_ni               ),
+  )
+  udma_generic_reg_if_i (
+    .clk_i               ( sys_clk_i ),
+    .rst_ni,
+    .test_mode_i,
 
-    .cfg_data_i          ( cfg_data_i           ),
-    .cfg_addr_i          ( cfg_addr_i           ),
-    .cfg_valid_i         ( cfg_valid_i          ),
-    .cfg_rwn_i           ( cfg_rwn_i            ),
-    .cfg_data_o          ( cfg_data_o           ),
-    .cfg_ready_o         ( cfg_ready_o          ),
+    .cfg_data_i,
+    .cfg_addr_i,
+    .cfg_valid_i,
+    .cfg_rwn_i,
+    .cfg_data_o,
+    .cfg_ready_o,
 
-    .cfg_rx_startaddr_o  ( cfg_rx_startaddr_o   ),
-    .cfg_rx_size_o       ( cfg_rx_size_o        ),
-    .cfg_rx_datasize_o   ( data_rx_datasize_o   ),
-    .cfg_rx_continuous_o ( cfg_rx_continuous_o  ),
-    .cfg_rx_en_o         ( cfg_rx_en_o          ),
-    .cfg_rx_clr_o        ( cfg_rx_clr_o         ),
-    .cfg_rx_en_i         ( cfg_rx_en_i          ),
-    .cfg_rx_pending_i    ( cfg_rx_pending_i     ),
-    .cfg_rx_curr_addr_i  ( cfg_rx_curr_addr_i   ),
-    .cfg_rx_bytes_left_i ( cfg_rx_bytes_left_i  )
+    .cfg_rx_startaddr_o,
+    .cfg_rx_size_o,
+    .cfg_rx_datasize_o   ( data_rx_datasize_o ),
+    .cfg_rx_continuous_o,
+    .cfg_rx_en_o,
+    .cfg_rx_clr_o,
+    .cfg_rx_en_i,
+    .cfg_rx_pending_i,
+    .cfg_rx_curr_addr_i,
+    .cfg_rx_bytes_left_i
   );
-
 
 endmodule
