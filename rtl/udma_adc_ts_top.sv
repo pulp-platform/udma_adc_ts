@@ -44,7 +44,9 @@ module udma_adc_ts_top #(
   output logic                       data_rx_valid_o,
   input  logic                       data_rx_ready_i,
 
-  // Timestamp signals
+  output logic                       pending_event_o,
+
+  // TimeSync signals
   input  logic                       ts_valid_async_i,
   input  logic   [TS_CHID_WIDTH-1:0] ts_chid_i,
   input  logic   [TS_DATA_WIDTH-1:0] ts_data_i
@@ -61,12 +63,72 @@ module udma_adc_ts_top #(
   logic                [31:0] sys_data_sync;
   logic                [31:0] sys_merged_data;
 
+  /* TS count and pending event generation */
+  logic                       tf_valid;
+
+  logic                       pending_event_clr;
+  logic                       pending_event_q, pending_event_n;
+  logic      [TRANS_SIZE-3:0] pending_cnt_q, pending_cnt_n;
+  enum logic  {IDLE, PENDING} pending_state_q, pending_state_n;
+
+
   assign data_rx_valid_o = sys_udma_valid_SP;
   assign data_rx_o       = sys_data_sync;
 
+  assign pending_event_o = pending_event_q;
+
+  assign ts_vld_edge  = (ts_data_valid_sync[1]  & ~ts_data_valid_sync[2])  | (~ts_data_valid_sync[1]  & ts_data_valid_sync[2]);
+  assign sys_vld_edge = (sys_data_valid_sync[1] & ~sys_data_valid_sync[2]) | (~sys_data_valid_sync[1] & sys_data_valid_sync[2]);
+
+  assign tf_valid     = sys_udma_valid_SP & data_rx_ready_i;
+
+
+  always_comb begin
+    sys_merged_data = '0;
+    sys_merged_data[TS_DATA_WIDTH-1:0]                       = ts_data_sync; // handover between clock domains here
+    sys_merged_data[TS_CHID_LSB+TS_CHID_WIDTH-1:TS_CHID_LSB] = ts_chid_i;
+  end
+
+  always_comb begin
+    sys_udma_valid_SN = sys_udma_valid_SP;
+    if (sys_vld_edge)
+      sys_udma_valid_SN = 1'b1;
+    else if (data_rx_ready_i)
+      sys_udma_valid_SN = 1'b0;
+  end
+
+  always_comb begin
+    pending_state_n = pending_state_q;
+    pending_event_n = 1'b0;
+    pending_cnt_n   = pending_cnt_q;
+    
+    case(pending_state_q)
+      IDLE: begin
+        if (tf_valid) begin
+          pending_event_n = 1'b1;
+          pending_cnt_n   = 'd1;
+          pending_state_n = PENDING;
+        end
+      end
+      PENDING: begin
+        if (pending_event_clr & ~tf_valid) begin
+          pending_cnt_n   = '0;
+          pending_state_n = IDLE;
+        end
+        else if (pending_event_clr & tf_valid) begin
+          pending_cnt_n   = 'd1;
+          pending_event_n = 1'b1;
+        end
+        else if (tf_valid) begin
+          pending_cnt_n   = (pending_cnt_q == '1) ? '0 : pending_cnt_q + 1;
+        end
+      end
+    endcase
+  end
+
   // sync & edge detect of ts_valid - ts clock side
   always_ff @(posedge ts_clk_i, negedge rst_ni) begin
-    if ( rst_ni == 1'b0 ) begin
+    if (rst_ni == 1'b0) begin
       ts_data_valid_sync    <= '0;
       ts_data_sync          <= '0;
     end
@@ -83,10 +145,14 @@ module udma_adc_ts_top #(
 
   // sync & edge detect of ts_valid - sys clock side
   always_ff @(posedge sys_clk_i, negedge rst_ni) begin
-    if ( rst_ni == 1'b0 ) begin
-      sys_data_valid_sync    <= '0;
-      sys_udma_valid_SP      <= '0;
-      sys_data_sync          <= '0;
+    if (rst_ni == 1'b0) begin
+      sys_data_valid_sync <= '0;
+      sys_udma_valid_SP   <= '0;
+      sys_data_sync       <= '0;
+
+      pending_event_q     <= 1'b0;
+      pending_cnt_q       <= '0;
+      pending_state_q     <= IDLE;
     end
     else begin
       sys_data_valid_sync[0] <= ts_data_valid_sync[2]; // handover between clock domains here
@@ -94,36 +160,24 @@ module udma_adc_ts_top #(
       sys_data_valid_sync[2] <= sys_data_valid_sync[1];
       sys_udma_valid_SP      <= sys_udma_valid_SN;
 
+      pending_event_q <= pending_event_n;
+      pending_state_q <= pending_state_n;
+
       if (sys_vld_edge)
         sys_data_sync <= sys_merged_data;
+
+      if (tf_valid | pending_event_clr)
+        pending_cnt_q <= pending_cnt_n;
 
     end
   end
 
-  assign ts_vld_edge  = (ts_data_valid_sync[1]  & ~ts_data_valid_sync[2])  | (~ts_data_valid_sync[1]  & ts_data_valid_sync[2]);
-  assign sys_vld_edge = (sys_data_valid_sync[1] & ~sys_data_valid_sync[2]) | (~sys_data_valid_sync[1] & sys_data_valid_sync[2]);
-
-  always_comb begin
-    sys_merged_data = '0;
-    sys_merged_data[TS_DATA_WIDTH-1:0]                       = ts_data_sync; // handover between clock domains here
-    sys_merged_data[TS_CHID_LSB+TS_CHID_WIDTH-1:TS_CHID_LSB] = ts_chid_i;
-  end
-
-  always_comb begin
-    sys_udma_valid_SN = sys_udma_valid_SP;
-    if (sys_vld_edge)
-      sys_udma_valid_SN = 1'b1;
-    else if (data_rx_ready_i)
-      sys_udma_valid_SN = 1'b0;
-  end
-
-
-  udma_generic_reg_if #(
+  udma_adc_ts_reg_if #(
     .L2_AWIDTH_NOAL  ( L2_AWIDTH_NOAL  ),
     .UDMA_TRANS_SIZE ( UDMA_TRANS_SIZE ),
     .TRANS_SIZE      ( TRANS_SIZE      )
   )
-  udma_generic_reg_if_i (
+  udma_adc_ts_reg_if_i (
     .clk_i               ( sys_clk_i ),
     .rst_ni,
     .test_mode_i,
@@ -144,7 +198,10 @@ module udma_adc_ts_top #(
     .cfg_rx_en_i,
     .cfg_rx_pending_i,
     .cfg_rx_curr_addr_i,
-    .cfg_rx_bytes_left_i
+    .cfg_rx_bytes_left_i,
+
+    .cfg_pending_cnt_i   ( pending_cnt_q      ),
+    .cfg_pending_clr_o   ( pending_event_clr  )
   );
 
 endmodule

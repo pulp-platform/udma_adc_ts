@@ -1,5 +1,6 @@
 udma_adc_ts:
   files: [
     rtl/udma_adc_ts_top.sv,
+    rtl/udma_adc_ts_reg_if.sv,
   ]
 
